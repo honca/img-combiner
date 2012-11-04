@@ -158,6 +158,10 @@ foreach ($files as $f) {
     $images[] = $file;
 }
 
+if (empty($images)) {
+    die("There are no images to combine in directory '$dir'.\n");
+}
+
 try {
     $totalImages = 0;
     $startTime = microtime(true);
