@@ -1,0 +1,1 @@
+Simple PHP script for combine multiple images into one image. Usefull for HTML coders..
