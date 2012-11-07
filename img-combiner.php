@@ -20,6 +20,8 @@ $types	= array('png');
 $cols	= 20; // images in line
 $format = 'png';    // default output format
 $margin = 0;	// margin around each image
+$export = false;
+$expFN	= 'combined_images.txt'; // filename with positions of each image
 
 // options
 $allowedOptions = array(
@@ -29,6 +31,7 @@ $allowedOptions = array(
     '-c' => array('<number>', "Count of images in one line. Default is $cols."),
     '-o' => array('<format>', "Output image format, e.g. 'png'. Default is $format."),
     '-m' => array('<number>', "Margin in pixels around each image. Default is {$margin}px."),
+    '-e' => array('<filename>', "Export positions of each image to the text file. Filename is optional. Default name is '$expFN'."),
     '-h' => array('', 'Display this help message.')
 );
 $allowedTypes = array('png', 'gif', 'jpg', 'jpeg');
@@ -49,7 +52,7 @@ while (list($key, $arg) = each($argv)) {
 
     $value = current($argv);
 
-    if (empty($value)) {
+    if (empty($value) && $arg != '-e') {
 	die("Missing value for option '$arg'.\n");
     }
 
@@ -122,6 +125,13 @@ while (list($key, $arg) = each($argv)) {
 
 	    $margin = $value;
 	    break;
+	case '-e': // export images positions to text file
+	    if (!empty($value)) {
+		$expFN = $value;
+	    }
+
+	    $export = true;
+	    break;
 	default:
 	    break;
     }
@@ -165,26 +175,66 @@ if (empty($images)) {
 try {
     $totalImages = 0;
     $startTime = microtime(true);
+    $positions = array();
+    $prevLineMaxHeight = $tmpMaxHeight = 0;
 
-    // create one icon from more files
+    // start to create one image from multiple images
     $imagesInLine = new Imagick();
     $combinedImages = new Imagick();
-    $empty = true;	// any icon to process yet?
+    $empty = true; // any image to process yet?
 
     foreach ($images as $index => $image) {
 	$img = new Imagick($image);
 	$img->borderimage(($format == 'jpg' ? 'white' : 'transparent'), $margin, $margin);
 	if ($ok = $imagesInLine->addimage($img)) {
 	    $totalImages++;
+
+	    // add position
+	    list($width, $height) = getimagesize($image);
+	    $prevLineIndex = $index - $cols;
+	    $prevIndex = $index - 1;
+	    $left = $top = 0;
+	    $tmpMaxHeight = max($tmpMaxHeight, $height);
+
+	    if (isset($positions[$prevLineIndex])) { // is not first line
+		if ($index % $cols == 0) { // first image in line
+		    $left = 0 + $margin;
+		} else {
+		    $left = calculateLeftPosition($positions[$prevIndex], $margin);
+		}
+
+		$prevItem = $positions[$prevLineIndex];
+		$totalTop = $prevItem['top'] + $prevLineMaxHeight + $margin;
+		$top = $totalTop + 1;
+	    } else { // first line
+		if ($index) {
+		    $left = calculateLeftPosition($positions[$prevIndex], $margin);
+		} else { // first image
+		    $left = 0 + $margin;
+		}
+		$top = 0 + $margin;
+	    }
+
+	    $positions[$index] = array(
+		'number' => $index + 1,
+		'left' => $left,
+		'top' => $top,
+		'width' => $width,
+		'height' => $height,
+		'imageName' => pathinfo($image, PATHINFO_BASENAME)
+	    );
+
 	}
 	echo ($index + 1) . ") Adding: $image ... " . ($ok ? 'ok' : 'error') . "\n";
 	$empty = false;
 
-	if ($totalImages % $cols == 0) {	// wrap images in line
+	if ($totalImages % $cols == 0) { // wrap images in line
 	    $imagesInLine->resetiterator();
 	    $combinedImages->addImage($imagesInLine->appendimages(false));
 	    $imagesInLine = new Imagick();
 	    $empty = true;
+	    $prevLineMaxHeight = $tmpMaxHeight;
+	    $tmpMaxHeight = 0;
 	}
     }
 
@@ -204,8 +254,20 @@ try {
     if ($finalImages->writeimage()) {
 	$totalTime = round(microtime(true) - $startTime, 3);
 
-	echo "\n\n";
+	echo "\n";
 	echo "$totalImages image" . ($totalImages === 1 ? '' : 's') . " combined into image '$outputFile' in $totalTime seconds.\n";
+
+	// export positions to text file
+	if ($export) {
+	    $exportFilename = __DIR__ . "/$expFN";
+	    if (!preg_match('~\.txt$~', $exportFilename)) {
+		$exportFilename = "$exportFilename.txt";
+	    }
+	    if (exportPositions($positions, $exportFilename)) {
+		echo "Positions exported to '$exportFilename'.\n";
+	    }
+	}
+
 	exit(0);
     } else {
 	die("Error while creating image '$outputFile'.");
@@ -217,6 +279,10 @@ try {
 
 //---------------------------------- functions -------------------------------//
 
+/**
+ * Help
+ * @param array $options
+ */
 function displayHelp(array $options)
 {
     echo "Usage: [options] [arguments]\n";
@@ -225,6 +291,43 @@ function displayHelp(array $options)
     }
     echo "\n";
     exit(0);
+}
+
+/**
+ * From the previous image calculates a count of pixels from the left edge.
+ * @param array $prevItem
+ * @param int $margin
+ * @return int
+ */
+function calculateLeftPosition(array $prevItem, $margin = 0)
+{
+    $left = $prevItem['left'] + $prevItem['width'] + $margin;
+    return $left + 1;
+}
+
+/**
+ * Exports positions of all images to text file.
+ * @param array $positions
+ * @param string $filename
+ * @return boolean
+ */
+function exportPositions(array $positions, $filename)
+{
+    $l = '';
+
+    if (!empty($positions)) {
+	$c = array_keys($positions[0]); // cols
+	$header = array_combine($c, $c);
+	array_unshift($positions, $header);
+
+	foreach ($positions as $p) {
+	    $l .= "$p[number]|$p[left]|$p[top]|$p[width]|$p[height]|$p[imageName]\n";
+	}
+
+	return file_put_contents($filename, $l) !== false;
+    }
+
+    return false;
 }
 
 exit(0);
